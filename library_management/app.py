@@ -4,6 +4,7 @@ import sqlite3
 import os
 from datetime import datetime
 from functools import wraps
+from config import ADMIN_SECRET_CODE
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key_change_this'
@@ -126,40 +127,6 @@ def index():
     return render_template('index.html')
 
 # ==================== STUDENT ROUTES ====================
-@app.route('/student/register', methods=['GET', 'POST'])
-def student_register():
-    """Student registration"""
-    if request.method == 'POST':
-        name = request.form.get('name')
-        email = request.form.get('email')
-        roll_number = request.form.get('roll_number')
-        password = request.form.get('password')
-        phone = request.form.get('phone')
-        department = request.form.get('department')
-        
-        if not all([name, email, roll_number, password]):
-            flash('All fields are required', 'danger')
-            return redirect(url_for('student_register'))
-        
-        conn = get_db()
-        cursor = conn.cursor()
-        
-        try:
-            hashed_password = generate_password_hash(password)
-            cursor.execute('''
-                INSERT INTO students (name, email, roll_number, password, phone, department)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (name, email, roll_number, hashed_password, phone, department))
-            conn.commit()
-            flash('Registration successful! Please login.', 'success')
-            return redirect(url_for('student_login'))
-        except sqlite3.IntegrityError:
-            flash('Email or Roll Number already exists', 'danger')
-        finally:
-            conn.close()
-    
-    return render_template('student_register.html')
-
 @app.route('/student/login', methods=['GET', 'POST'])
 def student_login():
     """Student login"""
@@ -303,12 +270,18 @@ def return_book(issue_id):
 # ==================== ADMIN ROUTES ====================
 @app.route('/admin/register', methods=['GET', 'POST'])
 def admin_register():
-    """Admin registration"""
+    """Admin registration with verification code"""
     if request.method == 'POST':
         username = request.form.get('username')
         email = request.form.get('email')
         name = request.form.get('name')
         password = request.form.get('password')
+        secret_code = request.form.get('secret_code')
+        
+        # Verify secret code
+        if secret_code != ADMIN_SECRET_CODE:
+            flash('Invalid admin verification code!', 'danger')
+            return redirect(url_for('admin_register'))
         
         if not all([username, email, name, password]):
             flash('All fields are required', 'danger')
@@ -386,6 +359,62 @@ def admin_dashboard():
                          total_books=total_books,
                          books_borrowed=books_borrowed,
                          open_reports=open_reports)
+
+@app.route('/admin/students', methods=['GET', 'POST'])
+@admin_required
+def admin_students():
+    """Admin manage students - view and register new students"""
+    if request.method == 'POST':
+        action = request.form.get('action')
+        
+        if action == 'register':
+            name = request.form.get('name')
+            email = request.form.get('email')
+            roll_number = request.form.get('roll_number')
+            password = request.form.get('password')
+            phone = request.form.get('phone')
+            department = request.form.get('department')
+            
+            if not all([name, email, roll_number, password]):
+                flash('All required fields must be filled', 'danger')
+                return redirect(url_for('admin_students'))
+            
+            conn = get_db()
+            cursor = conn.cursor()
+            
+            try:
+                hashed_password = generate_password_hash(password)
+                cursor.execute('''
+                    INSERT INTO students (name, email, roll_number, password, phone, department)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (name, email, roll_number, hashed_password, phone, department))
+                conn.commit()
+                flash(f'Student {name} registered successfully!', 'success')
+            except sqlite3.IntegrityError:
+                flash('Email or Roll Number already exists', 'danger')
+            finally:
+                conn.close()
+            
+            return redirect(url_for('admin_students'))
+        
+        elif action == 'delete':
+            student_id = request.form.get('student_id')
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM students WHERE id = ?', (student_id,))
+            conn.commit()
+            conn.close()
+            flash('Student deleted successfully!', 'success')
+            return redirect(url_for('admin_students'))
+    
+    # Get all students
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM students ORDER BY created_at DESC')
+    students = cursor.fetchall()
+    conn.close()
+    
+    return render_template('admin_students.html', students=students)
 
 @app.route('/admin/books')
 @admin_required

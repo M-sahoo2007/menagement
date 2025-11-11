@@ -73,10 +73,19 @@
 
 <!-- Call to Action -->
 <div class="bg-light py-5">
-    <div class="container text-center">
-        <h3 class="mb-4">New Student?</h3>
-        <p class="mb-4">Create an account to get started with our library system</p>
-        <a href="{{ url_for('student_register') }}" class="btn btn-primary btn-lg">Register Now</a>
+    <div class="container">
+        <div class="row">
+            <div class="col-md-6 text-center mb-4">
+                <h3 class="mb-4"><i class="fas fa-graduation-cap"></i> Student Access</h3>
+                <p class="mb-4">Ask your administrator for student login credentials</p>
+                <p class="text-muted">Only administrators can register new students</p>
+            </div>
+            <div class="col-md-6 text-center">
+                <h3 class="mb-4"><i class="fas fa-lock"></i> Admin Access</h3>
+                <p class="mb-4">Existing administrators can login to manage the system</p>
+                <p class="text-muted">New admin registrations require verification code</p>
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}
