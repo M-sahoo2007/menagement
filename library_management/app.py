@@ -1,0 +1,612 @@
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
+from werkzeug.security import generate_password_hash, check_password_hash
+import sqlite3
+import os
+from datetime import datetime
+from functools import wraps
+
+app = Flask(__name__)
+app.secret_key = 'your_secret_key_change_this'
+DATABASE = 'library.db'
+
+# Database initialization
+def init_db():
+    """Initialize the database with tables"""
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    
+    # Students table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS students (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            roll_number TEXT UNIQUE NOT NULL,
+            phone TEXT,
+            department TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # Admin table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS admin (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            name TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # Books table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS books (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            author TEXT NOT NULL,
+            isbn TEXT UNIQUE NOT NULL,
+            category TEXT NOT NULL,
+            quantity INTEGER NOT NULL,
+            available_quantity INTEGER NOT NULL,
+            description TEXT,
+            published_year INTEGER,
+            image_url TEXT,
+            added_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (added_by) REFERENCES admin(id)
+        )
+    ''')
+    
+    # Book Issues (student borrowing books)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS book_issues (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id INTEGER NOT NULL,
+            book_id INTEGER NOT NULL,
+            issue_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            return_date TIMESTAMP,
+            status TEXT DEFAULT 'borrowed',
+            FOREIGN KEY (student_id) REFERENCES students(id),
+            FOREIGN KEY (book_id) REFERENCES books(id)
+        )
+    ''')
+    
+    # Reports table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id INTEGER,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL,
+            category TEXT NOT NULL,
+            status TEXT DEFAULT 'open',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP,
+            response TEXT,
+            FOREIGN KEY (student_id) REFERENCES students(id)
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
+
+def get_db():
+    """Get database connection"""
+    conn = sqlite3.connect(DATABASE)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def login_required(f):
+    """Decorator for routes that require login"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            flash('Please login first', 'danger')
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+def admin_required(f):
+    """Decorator for routes that require admin login"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'admin_id' not in session:
+            flash('Admin login required', 'danger')
+            return redirect(url_for('admin_login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+# ==================== HOME & INDEX ====================
+@app.route('/')
+def index():
+    """Home page"""
+    return render_template('index.html')
+
+# ==================== STUDENT ROUTES ====================
+@app.route('/student/register', methods=['GET', 'POST'])
+def student_register():
+    """Student registration"""
+    if request.method == 'POST':
+        name = request.form.get('name')
+        email = request.form.get('email')
+        roll_number = request.form.get('roll_number')
+        password = request.form.get('password')
+        phone = request.form.get('phone')
+        department = request.form.get('department')
+        
+        if not all([name, email, roll_number, password]):
+            flash('All fields are required', 'danger')
+            return redirect(url_for('student_register'))
+        
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        try:
+            hashed_password = generate_password_hash(password)
+            cursor.execute('''
+                INSERT INTO students (name, email, roll_number, password, phone, department)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (name, email, roll_number, hashed_password, phone, department))
+            conn.commit()
+            flash('Registration successful! Please login.', 'success')
+            return redirect(url_for('student_login'))
+        except sqlite3.IntegrityError:
+            flash('Email or Roll Number already exists', 'danger')
+        finally:
+            conn.close()
+    
+    return render_template('student_register.html')
+
+@app.route('/student/login', methods=['GET', 'POST'])
+def student_login():
+    """Student login"""
+    if request.method == 'POST':
+        email = request.form.get('email')
+        password = request.form.get('password')
+        
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM students WHERE email = ?', (email,))
+        student = cursor.fetchone()
+        conn.close()
+        
+        if student and check_password_hash(student['password'], password):
+            session['user_id'] = student['id']
+            session['user_name'] = student['name']
+            session['user_type'] = 'student'
+            flash(f'Welcome {student["name"]}!', 'success')
+            return redirect(url_for('student_dashboard'))
+        else:
+            flash('Invalid email or password', 'danger')
+    
+    return render_template('student_login.html')
+
+@app.route('/student/dashboard')
+@login_required
+def student_dashboard():
+    """Student dashboard"""
+    if session.get('user_type') != 'student':
+        return redirect(url_for('student_login'))
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    # Get borrowed books
+    cursor.execute('''
+        SELECT bi.*, b.title, b.author, b.isbn
+        FROM book_issues bi
+        JOIN books b ON bi.book_id = b.id
+        WHERE bi.student_id = ?
+        ORDER BY bi.issue_date DESC
+    ''', (session['user_id'],))
+    borrowed_books = cursor.fetchall()
+    
+    conn.close()
+    return render_template('student_dashboard.html', borrowed_books=borrowed_books)
+
+@app.route('/student/books')
+@login_required
+def student_books():
+    """View all available books"""
+    if session.get('user_type') != 'student':
+        return redirect(url_for('student_login'))
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM books WHERE available_quantity > 0')
+    books = cursor.fetchall()
+    conn.close()
+    
+    return render_template('student_books.html', books=books)
+
+@app.route('/student/borrow/<int:book_id>', methods=['POST'])
+@login_required
+def borrow_book(book_id):
+    """Borrow a book"""
+    if session.get('user_type') != 'student':
+        return redirect(url_for('student_login'))
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    # Check if book is available
+    cursor.execute('SELECT * FROM books WHERE id = ?', (book_id,))
+    book = cursor.fetchone()
+    
+    if not book or book['available_quantity'] <= 0:
+        flash('Book not available', 'danger')
+        return redirect(url_for('student_books'))
+    
+    # Check if student already borrowed this book
+    cursor.execute('''
+        SELECT * FROM book_issues 
+        WHERE student_id = ? AND book_id = ? AND status = 'borrowed'
+    ''', (session['user_id'], book_id))
+    
+    if cursor.fetchone():
+        flash('You already have this book', 'warning')
+        return redirect(url_for('student_books'))
+    
+    # Issue the book
+    cursor.execute('''
+        INSERT INTO book_issues (student_id, book_id, status)
+        VALUES (?, ?, 'borrowed')
+    ''', (session['user_id'], book_id))
+    
+    # Update available quantity
+    cursor.execute('''
+        UPDATE books SET available_quantity = available_quantity - 1 WHERE id = ?
+    ''', (book_id,))
+    
+    conn.commit()
+    conn.close()
+    
+    flash('Book borrowed successfully!', 'success')
+    return redirect(url_for('student_dashboard'))
+
+@app.route('/student/return/<int:issue_id>', methods=['POST'])
+@login_required
+def return_book(issue_id):
+    """Return a borrowed book"""
+    if session.get('user_type') != 'student':
+        return redirect(url_for('student_login'))
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    cursor.execute('SELECT * FROM book_issues WHERE id = ?', (issue_id,))
+    issue = cursor.fetchone()
+    
+    if not issue or issue['student_id'] != session['user_id']:
+        flash('Invalid request', 'danger')
+        return redirect(url_for('student_dashboard'))
+    
+    # Update issue status
+    cursor.execute('''
+        UPDATE book_issues SET status = 'returned', return_date = CURRENT_TIMESTAMP WHERE id = ?
+    ''', (issue_id,))
+    
+    # Update available quantity
+    cursor.execute('''
+        UPDATE books SET available_quantity = available_quantity + 1 WHERE id = ?
+    ''', (issue['book_id'],))
+    
+    conn.commit()
+    conn.close()
+    
+    flash('Book returned successfully!', 'success')
+    return redirect(url_for('student_dashboard'))
+
+# ==================== ADMIN ROUTES ====================
+@app.route('/admin/register', methods=['GET', 'POST'])
+def admin_register():
+    """Admin registration"""
+    if request.method == 'POST':
+        username = request.form.get('username')
+        email = request.form.get('email')
+        name = request.form.get('name')
+        password = request.form.get('password')
+        
+        if not all([username, email, name, password]):
+            flash('All fields are required', 'danger')
+            return redirect(url_for('admin_register'))
+        
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        try:
+            hashed_password = generate_password_hash(password)
+            cursor.execute('''
+                INSERT INTO admin (username, email, name, password)
+                VALUES (?, ?, ?, ?)
+            ''', (username, email, name, hashed_password))
+            conn.commit()
+            flash('Admin registration successful! Please login.', 'success')
+            return redirect(url_for('admin_login'))
+        except sqlite3.IntegrityError:
+            flash('Username or Email already exists', 'danger')
+        finally:
+            conn.close()
+    
+    return render_template('admin_register.html')
+
+@app.route('/admin/login', methods=['GET', 'POST'])
+def admin_login():
+    """Admin login"""
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM admin WHERE username = ?', (username,))
+        admin = cursor.fetchone()
+        conn.close()
+        
+        if admin and check_password_hash(admin['password'], password):
+            session['admin_id'] = admin['id']
+            session['admin_name'] = admin['name']
+            session['user_type'] = 'admin'
+            flash(f'Welcome Admin {admin["name"]}!', 'success')
+            return redirect(url_for('admin_dashboard'))
+        else:
+            flash('Invalid username or password', 'danger')
+    
+    return render_template('admin_login.html')
+
+@app.route('/admin/dashboard')
+@admin_required
+def admin_dashboard():
+    """Admin dashboard"""
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    # Get statistics
+    cursor.execute('SELECT COUNT(*) as count FROM students')
+    total_students = cursor.fetchone()['count']
+    
+    cursor.execute('SELECT COUNT(*) as count FROM books')
+    total_books = cursor.fetchone()['count']
+    
+    cursor.execute('''
+        SELECT COUNT(*) as count FROM book_issues WHERE status = 'borrowed'
+    ''')
+    books_borrowed = cursor.fetchone()['count']
+    
+    cursor.execute('SELECT COUNT(*) as count FROM reports WHERE status = "open"')
+    open_reports = cursor.fetchone()['count']
+    
+    conn.close()
+    
+    return render_template('admin_dashboard.html', 
+                         total_students=total_students,
+                         total_books=total_books,
+                         books_borrowed=books_borrowed,
+                         open_reports=open_reports)
+
+@app.route('/admin/books')
+@admin_required
+def admin_books():
+    """View all books (admin)"""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM books ORDER BY created_at DESC')
+    books = cursor.fetchall()
+    conn.close()
+    
+    return render_template('admin_books.html', books=books)
+
+@app.route('/admin/book/add', methods=['GET', 'POST'])
+@admin_required
+def add_book():
+    """Add a new book"""
+    if request.method == 'POST':
+        title = request.form.get('title')
+        author = request.form.get('author')
+        isbn = request.form.get('isbn')
+        category = request.form.get('category')
+        quantity = request.form.get('quantity')
+        description = request.form.get('description')
+        published_year = request.form.get('published_year')
+        image_url = request.form.get('image_url')
+        
+        if not all([title, author, isbn, category, quantity]):
+            flash('All required fields must be filled', 'danger')
+            return redirect(url_for('add_book'))
+        
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                INSERT INTO books (title, author, isbn, category, quantity, available_quantity, 
+                                  description, published_year, image_url, added_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (title, author, isbn, category, int(quantity), int(quantity), 
+                  description, published_year, image_url, session['admin_id']))
+            conn.commit()
+            flash('Book added successfully!', 'success')
+            return redirect(url_for('admin_books'))
+        except sqlite3.IntegrityError:
+            flash('ISBN already exists', 'danger')
+        finally:
+            conn.close()
+    
+    return render_template('add_book.html')
+
+@app.route('/admin/book/edit/<int:book_id>', methods=['GET', 'POST'])
+@admin_required
+def edit_book(book_id):
+    """Edit a book"""
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    if request.method == 'POST':
+        title = request.form.get('title')
+        author = request.form.get('author')
+        category = request.form.get('category')
+        quantity = request.form.get('quantity')
+        description = request.form.get('description')
+        published_year = request.form.get('published_year')
+        image_url = request.form.get('image_url')
+        
+        cursor.execute('''
+            UPDATE books SET title = ?, author = ?, category = ?, quantity = ?, 
+                           description = ?, published_year = ?, image_url = ?
+            WHERE id = ?
+        ''', (title, author, category, int(quantity), description, published_year, image_url, book_id))
+        
+        conn.commit()
+        flash('Book updated successfully!', 'success')
+        conn.close()
+        return redirect(url_for('admin_books'))
+    
+    cursor.execute('SELECT * FROM books WHERE id = ?', (book_id,))
+    book = cursor.fetchone()
+    conn.close()
+    
+    if not book:
+        flash('Book not found', 'danger')
+        return redirect(url_for('admin_books'))
+    
+    return render_template('edit_book.html', book=book)
+
+@app.route('/admin/book/delete/<int:book_id>', methods=['POST'])
+@admin_required
+def delete_book(book_id):
+    """Delete a book"""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM books WHERE id = ?', (book_id,))
+    conn.commit()
+    conn.close()
+    
+    flash('Book deleted successfully!', 'success')
+    return redirect(url_for('admin_books'))
+
+# ==================== REPORTS ROUTES ====================
+@app.route('/student/reports')
+@login_required
+def view_reports():
+    """View reports (student)"""
+    if session.get('user_type') != 'student':
+        return redirect(url_for('student_login'))
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT * FROM reports WHERE student_id = ? ORDER BY created_at DESC
+    ''', (session['user_id'],))
+    reports = cursor.fetchall()
+    conn.close()
+    
+    return render_template('student_reports.html', reports=reports)
+
+@app.route('/student/report/create', methods=['GET', 'POST'])
+@login_required
+def create_report():
+    """Create a library report"""
+    if session.get('user_type') != 'student':
+        return redirect(url_for('student_login'))
+    
+    if request.method == 'POST':
+        title = request.form.get('title')
+        description = request.form.get('description')
+        category = request.form.get('category')
+        
+        if not all([title, description, category]):
+            flash('All fields are required', 'danger')
+            return redirect(url_for('create_report'))
+        
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO reports (student_id, title, description, category, status)
+            VALUES (?, ?, ?, ?, 'open')
+        ''', (session['user_id'], title, description, category))
+        conn.commit()
+        conn.close()
+        
+        flash('Report submitted successfully!', 'success')
+        return redirect(url_for('view_reports'))
+    
+    return render_template('create_report.html')
+
+@app.route('/admin/reports')
+@admin_required
+def admin_reports():
+    """View all reports (admin)"""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT r.*, s.name as student_name, s.email
+        FROM reports r
+        LEFT JOIN students s ON r.student_id = s.id
+        ORDER BY r.created_at DESC
+    ''')
+    reports = cursor.fetchall()
+    conn.close()
+    
+    return render_template('admin_reports.html', reports=reports)
+
+@app.route('/admin/report/<int:report_id>/respond', methods=['GET', 'POST'])
+@admin_required
+def respond_report(report_id):
+    """Respond to a report"""
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    if request.method == 'POST':
+        response = request.form.get('response')
+        status = request.form.get('status')
+        
+        cursor.execute('''
+            UPDATE reports SET response = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ''', (response, status, report_id))
+        
+        conn.commit()
+        flash('Report updated successfully!', 'success')
+        conn.close()
+        return redirect(url_for('admin_reports'))
+    
+    cursor.execute('''
+        SELECT r.*, s.name as student_name, s.email
+        FROM reports r
+        LEFT JOIN students s ON r.student_id = s.id
+        WHERE r.id = ?
+    ''', (report_id,))
+    report = cursor.fetchone()
+    conn.close()
+    
+    if not report:
+        flash('Report not found', 'danger')
+        return redirect(url_for('admin_reports'))
+    
+    return render_template('respond_report.html', report=report)
+
+# ==================== LOGOUT ====================
+@app.route('/logout')
+def logout():
+    """Logout"""
+    session.clear()
+    flash('Logged out successfully!', 'success')
+    return redirect(url_for('index'))
+
+# ==================== ERROR HANDLERS ====================
+@app.errorhandler(404)
+def page_not_found(e):
+    return render_template('404.html'), 404
+
+@app.errorhandler(500)
+def server_error(e):
+    return render_template('500.html'), 500
+
+# ==================== RUN APP ====================
+if __name__ == '__main__':
+    if not os.path.exists(DATABASE):
+        init_db()
+    app.run(debug=True, host='0.0.0.0', port=5000)

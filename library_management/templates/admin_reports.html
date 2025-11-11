@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block title %}All Reports - Admin{% endblock %}
+
+{% block content %}
+<div class="container my-5">
+    <h2 class="mb-4"><i class="fas fa-file-alt"></i> Library Reports</h2>
+
+    <div class="row mb-3">
+        <div class="col-md-12">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3">
+                            <p class="text-muted mb-0">Total Reports</p>
+                            <h4>{{ reports|length }}</h4>
+                        </div>
+                        <div class="col-md-3">
+                            <p class="text-muted mb-0">Open Reports</p>
+                            <h4>{{ reports|selectattr('status', 'equalto', 'open')|list|length }}</h4>
+                        </div>
+                        <div class="col-md-3">
+                            <p class="text-muted mb-0">In Progress</p>
+                            <h4>{{ reports|selectattr('status', 'equalto', 'in_progress')|list|length }}</h4>
+                        </div>
+                        <div class="col-md-3">
+                            <p class="text-muted mb-0">Resolved</p>
+                            <h4>{{ reports|selectattr('status', 'equalto', 'resolved')|list|length }}</h4>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if reports %}
+        <div class="table-responsive">
+            <table class="table table-hover table-striped">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Report ID</th>
+                        <th>Student Name</th>
+                        <th>Email</th>
+                        <th>Title</th>
+                        <th>Category</th>
+                        <th>Date</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for report in reports %}
+                        <tr>
+                            <td>#{{ report['id'] }}</td>
+                            <td>{{ report['student_name'] if report['student_name'] else 'Anonymous' }}</td>
+                            <td>{{ report['email'] if report['email'] else 'N/A' }}</td>
+                            <td><strong>{{ report['title'] }}</strong></td>
+                            <td><span class="badge bg-info">{{ report['category'] }}</span></td>
+                            <td>{{ report['created_at'][:10] }}</td>
+                            <td>
+                                {% if report['status'] == 'open' %}
+                                    <span class="badge bg-danger">OPEN</span>
+                                {% elif report['status'] == 'in_progress' %}
+                                    <span class="badge bg-warning">IN PROGRESS</span>
+                                {% else %}
+                                    <span class="badge bg-success">RESOLVED</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <a href="{{ url_for('respond_report', report_id=report['id']) }}" class="btn btn-primary btn-sm">
+                                    <i class="fas fa-reply"></i> Respond
+                                </a>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="alert alert-info text-center py-5">
+            <i class="fas fa-file-alt fa-3x mb-3"></i>
+            <p>No reports submitted yet.</p>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

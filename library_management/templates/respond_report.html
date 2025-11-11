@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+
+{% block title %}Respond to Report - Admin{% endblock %}
+
+{% block content %}
+<div class="container my-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card shadow">
+                <div class="card-header bg-primary text-white">
+                    <h4 class="mb-0"><i class="fas fa-reply"></i> Respond to Report</h4>
+                </div>
+                <div class="card-body">
+                    <!-- Report Details -->
+                    <div class="card mb-4 border-0 bg-light">
+                        <div class="card-body">
+                            <h5><strong>Report Details</strong></h5>
+                            <hr>
+                            <p><strong>Report ID:</strong> #{{ report['id'] }}</p>
+                            <p><strong>Student:</strong> {{ report['student_name'] if report['student_name'] else 'Anonymous' }} ({{ report['email'] if report['email'] else 'N/A' }})</p>
+                            <p><strong>Title:</strong> {{ report['title'] }}</p>
+                            <p><strong>Category:</strong> <span class="badge bg-info">{{ report['category'] }}</span></p>
+                            <p><strong>Current Status:</strong> 
+                                {% if report['status'] == 'open' %}
+                                    <span class="badge bg-danger">OPEN</span>
+                                {% elif report['status'] == 'in_progress' %}
+                                    <span class="badge bg-warning">IN PROGRESS</span>
+                                {% else %}
+                                    <span class="badge bg-success">RESOLVED</span>
+                                {% endif %}
+                            </p>
+                            <p><strong>Submitted on:</strong> {{ report['created_at'][:10] }}</p>
+                            <hr>
+                            <p><strong>Description:</strong></p>
+                            <p style="white-space: pre-wrap;">{{ report['description'] }}</p>
+                        </div>
+                    </div>
+
+                    <!-- Response Form -->
+                    <form method="POST" novalidate>
+                        <div class="mb-3">
+                            <label for="status" class="form-label">Update Status <span class="text-danger">*</span></label>
+                            <select class="form-control" id="status" name="status" required>
+                                <option value="open" {% if report['status'] == 'open' %}selected{% endif %}>Open</option>
+                                <option value="in_progress" {% if report['status'] == 'in_progress' %}selected{% endif %}>In Progress</option>
+                                <option value="resolved" {% if report['status'] == 'resolved' %}selected{% endif %}>Resolved</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="response" class="form-label">Your Response <span class="text-danger">*</span></label>
+                            <textarea class="form-control" id="response" name="response" rows="6" required placeholder="Type your response here...">{{ report['response'] if report['response'] else '' }}</textarea>
+                        </div>
+
+                        <div class="d-flex gap-2">
+                            <button type="submit" class="btn btn-success">
+                                <i class="fas fa-save"></i> Submit Response
+                            </button>
+                            <a href="{{ url_for('admin_reports') }}" class="btn btn-secondary">
+                                <i class="fas fa-arrow-left"></i> Back
+                            </a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
