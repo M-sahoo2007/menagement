@@ -90,6 +90,20 @@ def init_db():
             FOREIGN KEY (student_id) REFERENCES students(id)
         )
     ''')
+
+    # Admin actions / audit log
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS admin_actions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            admin_id INTEGER,
+            action TEXT NOT NULL,
+            target_type TEXT,
+            target_id INTEGER,
+            details TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (admin_id) REFERENCES admin(id)
+        )
+    ''')
     
     conn.commit()
     conn.close()
@@ -397,6 +411,48 @@ def admin_students():
             
             return redirect(url_for('admin_students'))
         
+        elif action == 'reset_password':
+            student_id = request.form.get('student_id')
+            new_password = request.form.get('new_password')
+            if not student_id or not new_password:
+                flash('Student ID and new password are required', 'danger')
+                return redirect(url_for('admin_students'))
+
+            conn = get_db()
+            cursor = conn.cursor()
+            hashed_password = generate_password_hash(new_password)
+            cursor.execute('UPDATE students SET password = ? WHERE id = ?', (hashed_password, student_id))
+            conn.commit()
+            # Audit log: record who reset the student's password
+            try:
+                admin_id = session.get('admin_id')
+                cursor.execute('''
+                    INSERT INTO admin_actions (admin_id, action, target_type, target_id, details)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (admin_id, 'reset_student_password', 'student', student_id, f'Reset password for student_id={student_id}'))
+                conn.commit()
+            except Exception:
+                # non-fatal if auditing fails
+                pass
+            # retrieve student name to display the freshly set plaintext to the admin
+            try:
+                cursor.execute('SELECT name FROM students WHERE id = ?', (student_id,))
+                row = cursor.fetchone()
+                student_name = row['name'] if row else ''
+            except Exception:
+                student_name = ''
+
+            # Save the plaintext temporarily in session so it can be shown once after redirect
+            session['last_reset'] = {
+                'student_id': student_id,
+                'password': new_password,
+                'student_name': student_name,
+            }
+
+            conn.close()
+            flash('Student password updated successfully!', 'success')
+            return redirect(url_for('admin_students'))
+
         elif action == 'delete':
             student_id = request.form.get('student_id')
             conn = get_db()
@@ -413,8 +469,9 @@ def admin_students():
     cursor.execute('SELECT * FROM students ORDER BY created_at DESC')
     students = cursor.fetchall()
     conn.close()
-    
-    return render_template('admin_students.html', students=students)
+    # If admin just reset a password, move that info into context and clear it from session
+    last_reset = session.pop('last_reset', None)
+    return render_template('admin_students.html', students=students, last_reset=last_reset)
 
 @app.route('/admin/books')
 @admin_required
@@ -427,6 +484,37 @@ def admin_books():
     conn.close()
     
     return render_template('admin_books.html', books=books)
+
+
+@app.route('/admin/delete_account', methods=['POST'])
+@admin_required
+def delete_admin_account():
+    """Allow admin to delete their own account after verifying secret code"""
+    secret_code = request.form.get('secret_code')
+    if secret_code != ADMIN_SECRET_CODE:
+        flash('Invalid secret code!', 'danger')
+        return redirect(url_for('admin_dashboard'))
+
+    admin_id = session.get('admin_id')
+    conn = get_db()
+    cursor = conn.cursor()
+    # Audit: record admin deletion
+    try:
+        cursor.execute('''
+            INSERT INTO admin_actions (admin_id, action, target_type, target_id, details)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (admin_id, 'delete_admin_account', 'admin', admin_id, f'Admin id {admin_id} deleted their own account'))
+        conn.commit()
+    except Exception:
+        pass
+
+    cursor.execute('DELETE FROM admin WHERE id = ?', (admin_id,))
+    conn.commit()
+    conn.close()
+
+    session.clear()
+    flash('Your admin account has been deleted.', 'success')
+    return redirect(url_for('index'))
 
 @app.route('/admin/book/add', methods=['GET', 'POST'])
 @admin_required
@@ -617,6 +705,127 @@ def respond_report(report_id):
     
     return render_template('respond_report.html', report=report)
 
+
+@app.route('/admin/audit')
+@admin_required
+def admin_audit():
+    """View admin action audit logs"""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT aa.*, a.username as admin_username
+        FROM admin_actions aa
+        LEFT JOIN admin a ON aa.admin_id = a.id
+        ORDER BY aa.created_at DESC
+    ''')
+    logs = cursor.fetchall()
+    conn.close()
+    return render_template('admin_audit.html', logs=logs)
+
+@app.route('/admin/book_borrowing_history')
+@admin_required
+def admin_book_borrowing_history():
+    """View all book borrowing history with student and book details"""
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    # Get all book issues with student and book details
+    cursor.execute('''
+        SELECT 
+            bi.id,
+            bi.issue_date,
+            bi.return_date,
+            bi.status,
+            s.name as student_name,
+            s.email as student_email,
+            s.roll_number,
+            b.title as book_title,
+            b.author,
+            b.isbn
+        FROM book_issues bi
+        JOIN students s ON bi.student_id = s.id
+        JOIN books b ON bi.book_id = b.id
+        ORDER BY bi.issue_date DESC
+    ''')
+    borrowing_history = cursor.fetchall()
+    conn.close()
+    
+    return render_template('admin_book_borrowing.html', borrowing_history=borrowing_history)
+
+
+@app.route('/admin/log_action', methods=['POST'])
+@admin_required
+def admin_log_action():
+    """Endpoint to record admin UI actions (reveal/copy) into admin_actions"""
+    data = request.get_json() or {}
+    action = data.get('action')
+    target_type = data.get('target_type')
+    target_id = data.get('target_id')
+    details = data.get('details')
+    admin_id = session.get('admin_id')
+
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO admin_actions (admin_id, action, target_type, target_id, details)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (admin_id, action, target_type, target_id, details))
+        conn.commit()
+    except Exception:
+        # Do not break UI if logging fails
+        pass
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    return jsonify({'status': 'ok'})
+
+
+@app.route('/admin/verify_action', methods=['POST'])
+@admin_required
+def admin_verify_action():
+    """Verify admin password before allowing sensitive UI actions (reveal/copy).
+    Expects JSON: { password, action, target_type, target_id, details }
+    On success, inserts an admin_actions row noting the authorization and returns ok.
+    """
+    data = request.get_json() or {}
+    password = data.get('password')
+    action = data.get('action')
+    target_type = data.get('target_type')
+    target_id = data.get('target_id')
+    details = data.get('details')
+
+    admin_id = session.get('admin_id')
+    if not admin_id or not password:
+        return jsonify({'status': 'fail', 'message': 'Missing credentials'}), 400
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM admin WHERE id = ?', (admin_id,))
+    admin = cursor.fetchone()
+
+    if not admin or not check_password_hash(admin['password'], password):
+        conn.close()
+        return jsonify({'status': 'fail', 'message': 'Invalid admin password'}), 403
+
+    # record that admin authorized this action
+    try:
+        cursor.execute('''
+            INSERT INTO admin_actions (admin_id, action, target_type, target_id, details)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (admin_id, f'authorize_{action}', target_type, target_id, details))
+        conn.commit()
+    except Exception:
+        # non-fatal
+        pass
+    finally:
+        conn.close()
+
+    return jsonify({'status': 'ok'})
+
 # ==================== LOGOUT ====================
 @app.route('/logout')
 def logout():
@@ -636,6 +845,7 @@ def server_error(e):
 
 # ==================== RUN APP ====================
 if __name__ == '__main__':
-    if not os.path.exists(DATABASE):
-        init_db()
+    # Always run init_db on startup to ensure any new tables (migrations)
+    # are created. `CREATE TABLE IF NOT EXISTS` is idempotent so this is safe.
+    init_db()
     app.run(debug=True, host='0.0.0.0', port=5000)

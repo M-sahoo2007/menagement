@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block title %}Admin Audit Log{% endblock %}
+
+{% block content %}
+<div class="container my-5">
+    <h2 class="mb-4"><i class="fas fa-clipboard-list"></i> Admin Audit Log</h2>
+
+    {% if logs %}
+    <div class="table-responsive">
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>When</th>
+                    <th>Admin</th>
+                    <th>Action</th>
+                    <th>Target</th>
+                    <th>Details</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for l in logs %}
+                <tr>
+                    <td><small class="text-muted">{{ l['created_at'] }}</small></td>
+                    <td>{{ l['admin_username'] or ('id:'+ (l['admin_id']|string)) }}</td>
+                    <td>{{ l['action'] }}</td>
+                    <td>{{ l['target_type'] or 'N/A' }} {{ l['target_id'] or '' }}</td>
+                    <td>{{ l['details'] or '' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="alert alert-info">No audit logs yet.</div>
+    {% endif %}
+</div>
+{% endblock %}

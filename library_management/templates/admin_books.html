@@ -51,7 +51,7 @@
                                     <i class="fas fa-edit"></i> Edit
                                 </a>
                                 <form method="POST" action="{{ url_for('delete_book', book_id=book['id']) }}" style="display:inline;">
-                                    <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Are you sure?')">
+                                    <button type="submit" class="btn btn-danger btn-sm confirm-submit" data-confirm="Are you sure?">
                                         <i class="fas fa-trash"></i> Delete
                                     </button>
                                 </form>

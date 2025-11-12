@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+
+{% block title %}Book Borrowing History - Admin{% endblock %}
+
+{% block content %}
+<div class="container my-5">
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <h2><i class="fas fa-history"></i> Book Borrowing History</h2>
+            <p class="text-muted">Complete record of all student book borrowing activities</p>
+        </div>
+    </div>
+
+    <!-- Summary Stats -->
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card text-center shadow-sm">
+                <div class="card-body">
+                    <h5 class="text-muted">Total Transactions</h5>
+                    <h3 class="text-primary">{{ borrowing_history|length }}</h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card text-center shadow-sm">
+                <div class="card-body">
+                    <h5 class="text-muted">Currently Borrowed</h5>
+                    <h3 class="text-warning">
+                        {% set borrowed = borrowing_history|selectattr('status', 'equalto', 'borrowed')|list %}
+                        {{ borrowed|length }}
+                    </h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card text-center shadow-sm">
+                <div class="card-body">
+                    <h5 class="text-muted">Returned</h5>
+                    <h3 class="text-success">
+                        {% set returned = borrowing_history|selectattr('status', 'equalto', 'returned')|list %}
+                        {{ returned|length }}
+                    </h3>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Borrowing History Table -->
+    <div class="card shadow">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0"><i class="fas fa-book"></i> Borrowing Records</h5>
+        </div>
+        <div class="card-body">
+            {% if borrowing_history %}
+                <div class="table-responsive">
+                    <table class="table table-striped table-hover" id="borrowingTable">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Student Name</th>
+                                <th>Roll Number</th>
+                                <th>Email</th>
+                                <th>Book Title</th>
+                                <th>Author</th>
+                                <th>ISBN</th>
+                                <th>Borrowed Date</th>
+                                <th>Return Date</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for record in borrowing_history %}
+                                <tr>
+                                    <td>
+                                        <i class="fas fa-user-circle"></i> <strong>{{ record['student_name'] }}</strong>
+                                    </td>
+                                    <td><span class="badge bg-info">{{ record['roll_number'] }}</span></td>
+                                    <td><small>{{ record['student_email'] }}</small></td>
+                                    <td>
+                                        <i class="fas fa-book"></i> {{ record['book_title'] }}
+                                    </td>
+                                    <td>{{ record['author'] }}</td>
+                                    <td><code>{{ record['isbn'] }}</code></td>
+                                    <td>
+                                        <small class="text-muted">
+                                            {{ record['issue_date'][:10] }}
+                                            <br>
+                                            <span class="text-secondary">{{ record['issue_date'][11:16] }}</span>
+                                        </small>
+                                    </td>
+                                    <td>
+                                        {% if record['return_date'] %}
+                                            <small class="text-success">
+                                                {{ record['return_date'][:10] }}
+                                                <br>
+                                                <span class="text-secondary">{{ record['return_date'][11:16] }}</span>
+                                            </small>
+                                        {% else %}
+                                            <span class="text-muted"><em>Not yet returned</em></span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if record['status'] == 'borrowed' %}
+                                            <span class="badge bg-warning text-dark">
+                                                <i class="fas fa-clock"></i> Borrowed
+                                            </span>
+                                        {% elif record['status'] == 'returned' %}
+                                            <span class="badge bg-success">
+                                                <i class="fas fa-check-circle"></i> Returned
+                                            </span>
+                                        {% else %}
+                                            <span class="badge bg-secondary">{{ record['status'] }}</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="alert alert-info text-center py-4">
+                    <i class="fas fa-history fa-3x mb-3"></i>
+                    <p>No borrowing history found.</p>
+                    <p>Books will appear here when students borrow them.</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Quick Filter Info -->
+    <div class="row mt-4">
+        <div class="col-md-12">
+            <div class="alert alert-light">
+                <h6><i class="fas fa-info-circle"></i> About this page:</h6>
+                <ul class="mb-0">
+                    <li>Shows all book transactions (borrowed and returned)</li>
+                    <li><strong>Borrowed Date:</strong> When the student borrowed the book</li>
+                    <li><strong>Return Date:</strong> When the student returned the book (empty if still borrowed)</li>
+                    <li><strong>Status:</strong> Current state of the book issue (Borrowed or Returned)</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+{% block scripts %}
+<script>
+// Optional: Add table search/filter functionality (if Bootstrap DataTables is available)
+document.addEventListener('DOMContentLoaded', function() {
+    // Basic text search for the table
+    const searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.className = 'form-control mb-3';
+    searchInput.placeholder = 'Search borrowing history...';
+    
+    const tableDiv = document.querySelector('.table-responsive');
+    if (tableDiv) {
+        tableDiv.parentElement.insertBefore(searchInput, tableDiv);
+        
+        const table = document.getElementById('borrowingTable');
+        if (table) {
+            searchInput.addEventListener('keyup', function() {
+                const filter = searchInput.value.toLowerCase();
+                const rows = table.getElementsByTagName('tbody')[0].getElementsByTagName('tr');
+                
+                for (let row of rows) {
+                    const text = row.textContent.toLowerCase();
+                    row.style.display = text.includes(filter) ? '' : 'none';
+                }
+            });
+        }
+    }
+});
+</script>
+{% endblock %}
+
+{% endblock %}
